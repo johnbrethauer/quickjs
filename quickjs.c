@@ -32,9 +32,6 @@
 #include <time.h>
 #include <fenv.h>
 #include <math.h>
-#include <script.h>
-#include <jsffi.h>
-#include <sokol/sokol_time.h>
 
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
@@ -5924,9 +5921,6 @@ static void gc_free_cycles(JSRuntime *rt)
 
 void JS_RunGC(JSRuntime *rt)
 {
-  double n = stm_now();
-  double size = rt->malloc_state.malloc_size;
-  
     /* decrement the reference of the children of each object. mark =
        1 after this pass. */
     gc_decref(rt);
@@ -5936,8 +5930,6 @@ void JS_RunGC(JSRuntime *rt)
 
     /* free the GC objects in a cycle */
     gc_free_cycles(rt);
-
-  script_report_gc_time(stm_now()-n, size, rt->malloc_state.malloc_size);
 }
 
 /* Return false if not an object or if the object has already been
