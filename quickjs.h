@@ -229,6 +229,10 @@ typedef struct JSValue {
 
 #define JS_NAN (JSValue){ .u.float64 = JS_FLOAT64_NAN, JS_TAG_FLOAT64 }
 
+int js_fn_linenum(JSContext *js, JSValueConst fn);
+JSAtom js_fn_filename(JSContext *js, JSValueConst fn);
+const char *get_func_name(JSContext *js, JSValueConst fn);
+
 static inline JSValue __JS_NewFloat64(JSContext *ctx, double d)
 {
     JSValue v;
@@ -355,7 +359,7 @@ void *JS_GetRuntimeOpaque(JSRuntime *rt);
 void JS_SetRuntimeOpaque(JSRuntime *rt, void *opaque);
 typedef void JS_MarkFunc(JSRuntime *rt, JSGCObjectHeader *gp);
 void JS_MarkValue(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func);
-void JS_RunGC(JSRuntime *rt);
+JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx);
 JS_BOOL JS_IsLiveObject(JSRuntime *rt, JSValueConst obj);
 
 JSContext *JS_NewContext(JSRuntime *rt);
@@ -427,7 +431,6 @@ typedef struct JSMemoryUsage {
 void JS_ComputeMemoryUsage(JSRuntime *rt, JSMemoryUsage *s);
 void JS_FillMemoryState(JSRuntime *rt, JSMemoryUsage *s);
 void JS_DumpMemoryUsage(FILE *fp, const JSMemoryUsage *s, JSRuntime *rt);
-void JS_DumpMyValue(JSRuntime *rt, JSValue v);
 double JS_MyValueSize(JSRuntime *rt, JSValue v);
 
 /* atom support */
@@ -1088,6 +1091,15 @@ int JS_SetModuleExport(JSContext *ctx, JSModuleDef *m, const char *export_name,
                        JSValue val);
 int JS_SetModuleExportList(JSContext *ctx, JSModuleDef *m,
                            const JSCFunctionListEntry *tab, int len);
+
+JSValue js_debugger_closure_variables(JSContext *js, JSValue fn);
+JSValue js_debugger_local_variables(JSContext *ctx, int stack_index);
+JSValue js_debugger_build_backtrace(JSContext *ctx, const uint8_t *cur_pc);
+JSValue js_debugger_fn_info(JSContext *ctx, JSValue fn);
+JSValue js_debugger_backtrace_fns(JSContext *ctx, const uint8_t *cur_pc);
+uint32_t js_debugger_stack_depth(JSContext *ctx);
+JSValue js_dump_value(JSContext *ctx, JSValue v);
+JSValue js_dump_object(JSContext *ctx, JSObject *p);
 
 #undef js_unlikely
 #undef js_force_inline

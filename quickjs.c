@@ -33,6 +33,10 @@
 #include <fenv.h>
 #include <math.h>
 
+#ifdef TRACY_ENABLE
+#include <tracy/TracyC.h>
+#endif
+
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__linux__) || defined(__GLIBC__)
@@ -1052,6 +1056,7 @@ enum OPCodeEnum {
     OP_TEMP_END,
 };
 
+
 static int JS_InitAtoms(JSRuntime *rt);
 static JSAtom __JS_NewAtomInit(JSRuntime *rt, const char *str, int len,
                                int atom_type);
@@ -1324,15 +1329,6 @@ static JSClassID js_class_id_alloc = JS_CLASS_INIT_COUNT;
 
 
 ////// CUSTOM DUMP FUNCTIONS
-void JS_DumpMyValue(JSRuntime *rt, JSValue v)
-{
-  uint32_t tag = JS_VALUE_GET_TAG(v);
-  if (tag == JS_TAG_OBJECT)
-    JS_DumpObject(dumpout, rt, JS_VALUE_GET_OBJ(v));
-  else
-    JS_DumpValueShort(dumpout, rt, v);
-}
-
 void JS_PrintShapes(JSRuntime *rt)
 {
   JS_DumpShapes(rt);
@@ -1357,7 +1353,7 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
         fprintf(dumpout, "GC: size=%" PRIu64 "\n",
           (uint64_t)rt->malloc_state.malloc_size);
 #endif
-        JS_RunGC(rt);
+        JS_RunGC(rt, NULL);
         rt->malloc_gc_threshold = rt->malloc_state.malloc_size +
             (rt->malloc_state.malloc_size >> 1);
     }
@@ -1789,6 +1785,9 @@ static void *js_def_malloc(JSMallocState *s, size_t size)
 
     s->malloc_count++;
     s->malloc_size += js_def_malloc_usable_size(ptr) + MALLOC_OVERHEAD;
+#ifdef TRACY_ENABLE    
+    TracyCAllocN(ptr,js_def_malloc_usable_size(ptr) + MALLOC_OVERHEAD, "quickjs");
+#endif
     return ptr;
 }
 
@@ -1799,6 +1798,9 @@ static void js_def_free(JSMallocState *s, void *ptr)
 
     s->malloc_count--;
     s->malloc_size -= js_def_malloc_usable_size(ptr) + MALLOC_OVERHEAD;
+#ifdef TRACY_ENABLE        
+    TracyCFreeN(ptr, "quickjs");
+#endif
     free(ptr);
 }
 
@@ -1815,17 +1817,26 @@ static void *js_def_realloc(JSMallocState *s, void *ptr, size_t size)
     if (size == 0) {
         s->malloc_count--;
         s->malloc_size -= old_size + MALLOC_OVERHEAD;
+#ifdef TRACY_ENABLE            
+        TracyCFreeN(ptr, "quickjs");
+#endif        
         free(ptr);
         return NULL;
     }
     if (s->malloc_size + size - old_size > s->malloc_limit)
         return NULL;
-
+        
+#ifdef TRACY_ENABLE    
+    TracyCFreeN(ptr, "quickjs");
+#endif
     ptr = realloc(ptr, size);
     if (!ptr)
         return NULL;
 
     s->malloc_size += js_def_malloc_usable_size(ptr) - old_size;
+#ifdef TRACY_ENABLE        
+    TracyCAllocN(ptr,js_def_malloc_usable_size(ptr) + MALLOC_OVERHEAD, "quickjs");
+#endif    
     return ptr;
 }
 
@@ -2016,7 +2027,7 @@ void JS_FreeRuntime(JSRuntime *rt)
     }
     init_list_head(&rt->job_list);
 
-    JS_RunGC(rt);
+    JS_RunGC(rt, NULL);
 
 #ifdef DUMP_LEAKS
     /* leaking objects */
@@ -5919,8 +5930,23 @@ static void gc_free_cycles(JSRuntime *rt)
     init_list_head(&rt->gc_zero_ref_count_list);
 }
 
-void JS_RunGC(JSRuntime *rt)
+struct gc_object {
+  void *address;
+  int refs;
+  void *shape;
+  int shrf;
+  int hashed;
+  void *class;
+  JSAtom classname;
+};
+
+JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx)
 {
+#ifdef TRACY_ENABLE
+    TracyCZone(js_gc, 1)
+#endif
+  JSValue ret = JS_UNDEFINED;
+
     /* decrement the reference of the children of each object. mark =
        1 after this pass. */
     gc_decref(rt);
@@ -5928,8 +5954,27 @@ void JS_RunGC(JSRuntime *rt)
     /* keep the GC objects with a non zero refcount and their childs */
     gc_scan(rt);
 
+if (ctx) {
+  ret = JS_NewArray(ctx);
+  int idx = 0;
+  // Fill with release information
+  struct list_head *el;
+  JSGCObjectHeader *p;
+  list_for_each(el, &rt->tmp_obj_list) {
+    p = list_entry(el, JSGCObjectHeader, link);
+    if (p->gc_obj_type != JS_GC_OBJ_TYPE_JS_OBJECT) continue;
+    JSValue dump = js_dump_object(ctx, (JSObject*)p);
+    JS_SetPropertyUint32(ctx, ret, idx++, dump);
+  }
+}
+
     /* free the GC objects in a cycle */
     gc_free_cycles(rt);
+
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(js_gc)
+#endif
+  return ret;
 }
 
 /* Return false if not an object or if the object has already been
@@ -6594,7 +6639,7 @@ static int find_line_num(JSContext *ctx, JSFunctionBytecode *b,
 /* in order to avoid executing arbitrary code during the stack trace
    generation, we only look at simple 'name' properties containing a
    string. */
-static const char *get_func_name(JSContext *ctx, JSValueConst func)
+const char *get_func_name(JSContext *ctx, JSValueConst func)
 {
     JSProperty *pr;
     JSShapeProperty *prs;
@@ -6611,6 +6656,16 @@ static const char *get_func_name(JSContext *ctx, JSValueConst func)
     if (JS_VALUE_GET_TAG(val) != JS_TAG_STRING)
         return NULL;
     return JS_ToCString(ctx, val);
+}
+
+int js_fn_linenum(JSContext *js, JSValueConst fn)
+{
+  return JS_VALUE_GET_OBJ(fn)->u.func.function_bytecode->debug.line_num;  
+}
+
+JSAtom js_fn_filename(JSContext *js, JSValueConst fn)
+{
+  return JS_VALUE_GET_OBJ(fn)->u.func.function_bytecode->debug.filename;
 }
 
 #define JS_BACKTRACE_FLAG_SKIP_FIRST_LEVEL (1 << 0)
@@ -11936,9 +11991,53 @@ static __maybe_unused void JS_DumpObjectHeader(FILE *fp, JSRuntime *rt)
            "ADDRESS", "REFS", "SHRF", "PROTO", "CLASS", "PROPS");
 }
 
+JSValue js_dump_object(JSContext *ctx, JSObject *p)
+{
+  JSValue ret = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, ret, "address", JS_NewInt32(ctx,(int)p));
+  JS_SetPropertyStr(ctx, ret, "refs", JS_NewInt32(ctx, p->header.ref_count));
+
+  JSShape *sh = p->shape;
+  if (sh) {
+    JS_SetPropertyStr(ctx, ret, "shape", JS_NewInt32(ctx,(int)sh));
+    JS_SetPropertyStr(ctx, ret, "hashed", JS_NewBool(ctx,sh->is_hashed));
+    JS_SetPropertyStr(ctx, ret, "class", JS_NewInt32(ctx,(int)sh->proto));
+    JS_SetPropertyStr(ctx, ret, "shape_refs", JS_NewInt32(ctx,sh->header.ref_count));
+  }
+    JS_SetPropertyStr(ctx, ret, "class_name", JS_AtomToString(ctx, JS_GetRuntime(ctx)->class_array[p->class_id].class_name));
+
+  return ret;
+}
+
+struct gc_object js_dump_gc_object(JSContext *ctx, JSObject *p)
+{
+  struct gc_object ret = {0};
+  ret.address = p;
+  ret.refs = p->header.ref_count;
+  
+  JSShape *sh = p->shape;
+  if (sh) {
+    ret.shape = sh;
+    ret.hashed = sh->is_hashed;
+    ret.class = sh->proto;
+    ret.shrf = sh->header.ref_count;
+    ret.classname = JS_GetRuntime(ctx)->class_array[p->class_id].class_name;
+  }
+  
+  return ret;
+}
+
+JSValue js_dump_value(JSContext *ctx, JSValue v)
+{
+  return js_dump_object(ctx, JS_VALUE_GET_OBJ(v));
+}
+
 /* for debug only: dump an object without side effect */
 static __maybe_unused void JS_DumpObject(FILE *fp, JSRuntime *rt, JSObject *p)
 {
+  struct gc_object obj;
+  obj.address = (void*)p;
+  obj.refs = p->header.ref_count;
     uint32_t i;
     char atom_buf[ATOM_GET_STR_BUF_SIZE];
     JSShape *sh;
@@ -11952,6 +12051,9 @@ static __maybe_unused void JS_DumpObject(FILE *fp, JSRuntime *rt, JSObject *p)
            (void *)p,
            p->header.ref_count);
     if (sh) {
+      obj.shrf = sh->header.ref_count;
+      obj.hashed = sh->is_hashed;
+      obj.class = sh->proto;
         fprintf(fp, "%3d%c %14p ",
                sh->header.ref_count,
                " *"[sh->is_hashed],
@@ -12043,29 +12145,39 @@ static __maybe_unused void JS_DumpObject(FILE *fp, JSRuntime *rt, JSObject *p)
 
 static __maybe_unused void JS_DumpGCObject(FILE *fp, JSRuntime *rt, JSGCObjectHeader *p)
 {
+  struct gc_object obj;
+  
     if (p->gc_obj_type == JS_GC_OBJ_TYPE_JS_OBJECT) {
         JS_DumpObject(fp, rt, (JSObject *)p);
     } else {
+//      obj.address = p;
+//      obj.refs = p->ref_count;
         fprintf(fp, "%14p %4d ",
                (void *)p,
                p->ref_count);
         switch(p->gc_obj_type) {
         case JS_GC_OBJ_TYPE_FUNCTION_BYTECODE:
+//            obj.type = JS_NewAtomString(ctx,"function_bytecode");
             fprintf(fp, "[function bytecode]");
             break;
         case JS_GC_OBJ_TYPE_SHAPE:
+//            obj.type = JS_NewAtomString(ctx,"shape");
             fprintf(fp, "[shape]");
             break;
         case JS_GC_OBJ_TYPE_VAR_REF:
+//            obj.type = JS_NewAtomString(ctx,"var_ref");
             fprintf(fp, "[var_ref]");
             break;
         case JS_GC_OBJ_TYPE_ASYNC_FUNCTION:
+//            obj.type = JS_NewAtomString(ctx,"async_function");
             fprintf(fp, "[async_function]");
             break;
         case JS_GC_OBJ_TYPE_JS_CONTEXT:
+//            obj.type = JS_NewAtomString(ctx,"context");
             fprintf(fp, "[js_context]");
             break;
         default:
+//            obj.type = JS_NewAtomString(ctx,"unknown");
             fprintf(fp, "[unknown %d]", p->gc_obj_type);
             break;
         }
@@ -16102,6 +16214,16 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
     sf->arg_buf = (JSValue*)arg_buf;
 
     func = p->u.cfunc.c_function;
+
+#ifdef TRACY_ENABLE
+    JSValue js_name = JS_GetPropertyStr(ctx, func_obj, "name");
+    const char *ccname = JS_ToCString(ctx, js_name);
+    const char *file = "<native C>";
+    TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(___tracy_alloc_srcloc(1, file, strlen(file), ccname, strlen(ccname), (int)ccname), 1);
+    JS_FreeCString(ctx,ccname);
+    JS_FreeValue(ctx, js_name);
+#endif
+
     switch(cproto) {
     case JS_CFUNC_constructor:
     case JS_CFUNC_constructor_or_func:
@@ -16186,6 +16308,11 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
     }
 
     rt->current_stack_frame = sf->prev_frame;
+   
+#ifdef TRACY_ENABLE
+    ___tracy_emit_zone_end(tracy_ctx);
+#endif
+
     return ret_val;
 }
 
@@ -16316,6 +16443,23 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
                          (JSValueConst *)argv, flags);
     }
     b = p->u.func.function_bytecode;
+
+    // IS A FUNCTION ****** TRACE HERE ******
+#ifdef TRACY_ENABLE
+    const char *fn_src = JS_AtomToCString(caller_ctx, js_fn_filename(caller_ctx,func_obj));
+    const char *js_func_name = get_func_name(caller_ctx, func_obj);
+    const char *fn_name;
+    if (!js_func_name || js_func_name[0] == '\0')
+      fn_name = "<anonymous>";
+    else
+      fn_name = js_func_name;
+
+  uint64_t srcloc;
+  srcloc = ___tracy_alloc_srcloc(js_fn_linenum(caller_ctx,func_obj), fn_src, strlen(fn_src), fn_name, strlen(fn_name), (int)fn_src);
+    
+    TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(srcloc,1);
+    JS_FreeCString(caller_ctx,js_func_name);
+#endif
 
     if (unlikely(argc < b->arg_count || (flags & JS_CALL_FLAG_COPY_ARGV))) {
         arg_allocated_size = b->arg_count;
@@ -18785,6 +18929,11 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
         }
     }
     rt->current_stack_frame = sf->prev_frame;
+
+#ifdef TRACY_ENABLE
+     ___tracy_emit_zone_end(tracy_ctx);
+#endif    
+
     return ret_val;
 }
 
@@ -56061,4 +56210,166 @@ void JS_AddIntrinsicTypedArrays(JSContext *ctx)
 #ifdef CONFIG_ATOMICS
     JS_AddIntrinsicAtomics(ctx);
 #endif
+}
+
+uint32_t js_debugger_stack_depth(JSContext *ctx) {
+    uint32_t stack_index = 0;
+    JSStackFrame *sf = ctx->rt->current_stack_frame;
+    while (sf != NULL) {
+        sf = sf->prev_frame;
+        stack_index++;
+    }
+    return stack_index;
+}
+
+JSValue js_debugger_backtrace_fns(JSContext *ctx, const uint8_t *cur_pc)
+{
+  JSValue ret = JS_NewArray(ctx);
+    JSStackFrame *sf;
+    const char *func_name_str;
+    JSObject *p;
+    uint32_t stack_index = 0;
+
+    for(sf = ctx->rt->current_stack_frame; sf != NULL; sf = sf->prev_frame) {
+      uint32_t id = stack_index++;    
+      JS_SetPropertyUint32(ctx, ret, id, JS_DupValue(ctx,sf->cur_func));
+    }
+    return ret;
+}
+
+JSValue js_debugger_build_backtrace(JSContext *ctx, const uint8_t *cur_pc)
+{
+    JSStackFrame *sf;
+    const char *func_name_str;
+    JSObject *p;
+    JSValue ret = JS_NewArray(ctx);
+    uint32_t stack_index = 0;
+
+    for(sf = ctx->rt->current_stack_frame; sf != NULL; sf = sf->prev_frame) {
+        JSValue current_frame = JS_NewObject(ctx);
+
+        uint32_t id = stack_index++;
+        JS_SetPropertyStr(ctx, current_frame, "id", JS_NewUint32(ctx, id));
+
+        func_name_str = get_func_name(ctx, sf->cur_func);
+        if (!func_name_str || func_name_str[0] == '\0')
+            JS_SetPropertyStr(ctx, current_frame, "name", JS_NewString(ctx, "<anonymous>"));
+        else
+            JS_SetPropertyStr(ctx, current_frame, "name", JS_NewString(ctx, func_name_str));
+        JS_FreeCString(ctx, func_name_str);
+
+        p = JS_VALUE_GET_OBJ(sf->cur_func);
+        if (p && js_class_has_bytecode(p->class_id)) {
+            JSFunctionBytecode *b;
+            int line_num1;
+
+            b = p->u.func.function_bytecode;
+            if (b->has_debug) {
+                const uint8_t *pc = sf != ctx->rt->current_stack_frame || !cur_pc ? sf->cur_pc : cur_pc;
+                line_num1 = find_line_num(ctx, b, pc - b->byte_code_buf - 1);
+                JS_SetPropertyStr(ctx, current_frame, "filename", JS_AtomToString(ctx, b->debug.filename));
+                if (line_num1 != -1)
+                    JS_SetPropertyStr(ctx, current_frame, "line", JS_NewUint32(ctx, line_num1));
+            }
+        } else {
+            JS_SetPropertyStr(ctx, current_frame, "name", JS_NewString(ctx, "(native)"));
+        }
+        JS_SetPropertyUint32(ctx, ret, id, current_frame);
+    }
+    return ret;
+}
+
+JSValue js_debugger_fn_info(JSContext *ctx, JSValue fn)
+{
+  JSValue ret = JS_NewObject(ctx);
+  JSObject *f = JS_VALUE_GET_OBJ(fn);
+  if (!f || !js_class_has_bytecode(f->class_id))
+    goto done;
+
+  JSFunctionBytecode *b = f->u.func.function_bytecode;
+  if (b->has_debug) {
+    JS_SetPropertyStr(ctx, ret, "filename", JS_AtomToString(ctx, b->debug.filename));
+    JS_SetPropertyStr(ctx, ret, "line", JS_NewInt32(ctx,b->debug.line_num));
+  }
+  done:
+  return ret;
+}
+
+JSValue js_debugger_local_variables(JSContext *ctx, int stack_index) {
+    JSValue ret = JS_NewObject(ctx);
+
+    JSStackFrame *sf;
+    int cur_index = 0;
+
+    for(sf = ctx->rt->current_stack_frame; sf != NULL; sf = sf->prev_frame) {
+        // this val is one frame up
+        if (cur_index == stack_index - 1) {
+            JSObject *f = JS_VALUE_GET_OBJ(sf->cur_func);
+            if (f && js_class_has_bytecode(f->class_id)) {
+                JSFunctionBytecode *b = f->u.func.function_bytecode;
+
+                JSValue this_obj = sf->var_buf[b->var_count];
+                // only provide a this if it is not the global object.
+                if (JS_VALUE_GET_OBJ(this_obj) != JS_VALUE_GET_OBJ(ctx->global_obj))
+                    JS_SetPropertyStr(ctx, ret, "this", JS_DupValue(ctx, this_obj));
+            }
+        }
+
+        if (cur_index < stack_index) {
+            cur_index++;
+            continue;
+        }
+
+        JSObject *f = JS_VALUE_GET_OBJ(sf->cur_func);
+        if (!f || !js_class_has_bytecode(f->class_id))
+            goto done;
+        JSFunctionBytecode *b = f->u.func.function_bytecode;
+
+        for (uint32_t i = 0; i < b->arg_count + b->var_count; i++) {
+            JSValue var_val;
+            if (i < b->arg_count)
+                var_val = sf->arg_buf[i];
+            else
+                var_val = sf->var_buf[i - b->arg_count];
+
+            if (JS_IsUninitialized(var_val))
+                continue;
+
+            JSVarDef *vd = b->vardefs + i;
+            JS_SetProperty(ctx, ret, vd->var_name, JS_DupValue(ctx, var_val));
+        }
+
+        break;
+    }
+
+done:
+    return ret;
+}
+
+JSValue js_debugger_closure_variables(JSContext *ctx, JSValue fn) {
+  JSValue ret = JS_NewObject(ctx);
+  JSObject *f = JS_VALUE_GET_OBJ(fn);
+  if (!f || !js_class_has_bytecode(f->class_id))
+    goto done;
+
+  JSFunctionBytecode *b = f->u.func.function_bytecode;
+
+  for (uint32_t i = 0; i < b->closure_var_count; i++) {
+    JSClosureVar *cvar = b->closure_var + i;
+    JSValue var_val;
+    JSVarRef *var_ref = NULL;
+    if (f->u.func.var_refs)
+      var_ref = f->u.func.var_refs[i];
+    if (!var_ref || !var_ref->pvalue)
+      continue;
+    var_val = *var_ref->pvalue;
+
+    if (JS_IsUninitialized(var_val))
+      continue;
+
+    JS_SetProperty(ctx, ret, cvar->var_name, JS_DupValue(ctx, var_val));
+  }
+
+done:
+    return ret;
 }
