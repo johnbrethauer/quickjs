@@ -16215,7 +16215,7 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
 
     func = p->u.cfunc.c_function;
 
-#ifdef TRACY_ENABLE
+#if defined(TRACY_ENABLE) && 0
     JSValue js_name = JS_GetPropertyStr(ctx, func_obj, "name");
     const char *ccname = JS_ToCString(ctx, js_name);
     const char *file = "<native C>";
@@ -16309,7 +16309,7 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
 
     rt->current_stack_frame = sf->prev_frame;
    
-#ifdef TRACY_ENABLE
+#if defined(TRACY_ENABLE) && 0
     ___tracy_emit_zone_end(tracy_ctx);
 #endif
 
@@ -16459,6 +16459,7 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
     
     TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(srcloc,1);
     JS_FreeCString(caller_ctx,js_func_name);
+    JS_FreeCString(caller_ctx,fn_src);
 #endif
 
     if (unlikely(argc < b->arg_count || (flags & JS_CALL_FLAG_COPY_ARGV))) {
