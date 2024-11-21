@@ -16215,13 +16215,11 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
 
     func = p->u.cfunc.c_function;
 
-#if defined(TRACY_ENABLE) && 0
-    JSValue js_name = JS_GetPropertyStr(ctx, func_obj, "name");
-    const char *ccname = JS_ToCString(ctx, js_name);
+#if defined(TRACY_ENABLE) && !defined(_WIN32)
+    const char *ccname = get_func_name(ctx,func_obj);
     const char *file = "<native C>";
     TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(___tracy_alloc_srcloc(1, file, strlen(file), ccname, strlen(ccname), (int)ccname), 1);
     JS_FreeCString(ctx,ccname);
-    JS_FreeValue(ctx, js_name);
 #endif
 
     switch(cproto) {
@@ -16309,7 +16307,7 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
 
     rt->current_stack_frame = sf->prev_frame;
    
-#if defined(TRACY_ENABLE) && 0
+#if defined(TRACY_ENABLE) && !defined(_WIN32)
     ___tracy_emit_zone_end(tracy_ctx);
 #endif
 
