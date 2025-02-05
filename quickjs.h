@@ -427,6 +427,8 @@ void JS_MarkValue(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func);
 JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx);
 JS_BOOL JS_IsLiveObject(JSRuntime *rt, JSValueConst obj);
 
+JSValue JS_NewSymbol(JSContext *ctx, const char *description, int is_global);
+
 JSContext *JS_NewContext(JSRuntime *rt);
 void JS_FreeContext(JSContext *s);
 JSContext *JS_DupContext(JSContext *ctx);

@@ -158,6 +158,8 @@ typedef enum JSErrorEnum {
 #define JS_STACK_SIZE_MAX 65534
 #define JS_STRING_LEN_MAX ((1 << 30) - 1)
 
+
+
 #define __exception __attribute__((warn_unused_result))
 
 typedef struct JSShape JSShape;
@@ -410,6 +412,9 @@ struct JSContext {
 
     JSValue global_obj; /* global object */
     JSValue global_var_obj; /* contains the global let/const definitions */
+
+    JSAtom doc_sym;
+    JSAtom typeof_sym;
 
     uint64_t random_state;
     bf_context_t *bf_ctx;   /* points to rt->bf_ctx, shared by all contexts */
@@ -2165,6 +2170,14 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     init_list_head(&ctx->loaded_modules);
 
     JS_AddIntrinsicBasicObjects(ctx);
+
+    JSValue dsym = JS_NewSymbol(ctx, "+documentation+", 0);
+    JSValue tsym = JS_NewSymbol(ctx, "+typeof+", 0);
+    ctx->doc_sym = JS_ValueToAtom(ctx,dsym);
+    ctx->typeof_sym = JS_ValueToAtom(ctx,tsym);
+    JS_FreeValue(ctx,dsym);
+    JS_FreeValue(ctx,tsym);
+
     return ctx;
 }
 
@@ -3022,7 +3035,7 @@ static JSAtom JS_NewAtomInt64(JSContext *ctx, int64_t n)
 }
 
 /* 'p' is freed */
-static JSValue JS_NewSymbol(JSContext *ctx, JSString *p, int atom_type)
+static JSValue JS_NewSymbolInternal(JSContext *ctx, JSString *p, int atom_type)
 {
     JSRuntime *rt = ctx->rt;
     JSAtom atom;
@@ -3043,7 +3056,7 @@ static JSValue JS_NewSymbolFromAtom(JSContext *ctx, JSAtom descr,
     assert(descr < rt->atom_size);
     p = rt->atom_array[descr];
     JS_DupValue(ctx, JS_MKPTR(JS_TAG_STRING, p));
-    return JS_NewSymbol(ctx, p, atom_type);
+    return JS_NewSymbolInternal(ctx, p, atom_type);
 }
 
 #define ATOM_GET_STR_BUF_SIZE 64
@@ -3093,6 +3106,15 @@ static const char *JS_AtomGetStrRT(JSRuntime *rt, char *buf, int buf_size,
         }
     }
     return buf;
+}
+
+/* `description` may be pure ASCII or UTF-8 encoded */
+JSValue JS_NewSymbol(JSContext *ctx, const char *description, int is_global)
+{
+    JSAtom atom = JS_NewAtom(ctx, description);
+    if (atom == JS_ATOM_NULL)
+        return JS_EXCEPTION;
+    return JS_NewSymbolFromAtom(ctx, atom, is_global ? JS_ATOM_TYPE_GLOBAL_SYMBOL : JS_ATOM_TYPE_SYMBOL);
 }
 
 static const char *JS_AtomGetStr(JSContext *ctx, char *buf, int buf_size, JSAtom atom)
@@ -7153,13 +7175,20 @@ done:
     return ret;
 }
 
+static JSValue js_object_isPrototypeOf(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
+
 /* return TRUE, FALSE or (-1) in case of exception */
 int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj)
 {
+  JSValue ret = js_object_isPrototypeOf(ctx, obj, 1, &val);
+  int b = JS_ToBool(ctx,ret);
+  JS_FreeValue(ctx,ret);
+    return b;
+/*
     JSValue method;
-
     if (!JS_IsObject(obj))
         goto fail;
+    if (!JS_
     method = JS_GetProperty(ctx, obj, JS_ATOM_Symbol_hasInstance);
     if (JS_IsException(method))
         return -1;
@@ -7169,13 +7198,13 @@ int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj)
         return JS_ToBoolFree(ctx, ret);
     }
 
-    /* legacy case */
     if (!JS_IsFunction(ctx, obj)) {
     fail:
         JS_ThrowTypeError(ctx, "invalid 'instanceof' right operand");
         return -1;
     }
     return JS_OrdinaryIsInstanceOf(ctx, val, obj);
+*/
 }
 
 /* return the value associated to the autoinit property or an exception */
@@ -14812,6 +14841,12 @@ static __exception int js_has_unscopable(JSContext *ctx, JSValueConst obj,
     }
     JS_FreeValue(ctx, arr);
     return ret;
+}
+
+static JSAtom js_atom_typeof(JSContext *js, JSValueConst o)
+{
+  JSObject *p = JS_VALUE_GET_OBJ(o);
+  return js->rt->class_array[p->class_id].class_name;
 }
 
 static __exception int js_operator_instanceof(JSContext *ctx, JSValue *sp)
@@ -38380,8 +38415,7 @@ static JSValue js_object_set___proto__(JSContext *ctx, JSValueConst this_val,
         return JS_UNDEFINED;
 }
 
-static JSValue js_object_isPrototypeOf(JSContext *ctx, JSValueConst this_val,
-                                       int argc, JSValueConst *argv)
+static JSValue js_object_isPrototypeOf(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     JSValue obj, v1;
     JSValueConst v;
@@ -47045,7 +47079,7 @@ static JSValue js_symbol_constructor(JSContext *ctx, JSValueConst new_target,
             return JS_EXCEPTION;
         p = JS_VALUE_GET_STRING(str);
     }
-    return JS_NewSymbol(ctx, p, JS_ATOM_TYPE_SYMBOL);
+    return JS_NewSymbolInternal(ctx, p, JS_ATOM_TYPE_SYMBOL);
 }
 
 static JSValue js_thisSymbolValue(JSContext *ctx, JSValueConst this_val)
@@ -47117,7 +47151,7 @@ static JSValue js_symbol_for(JSContext *ctx, JSValueConst this_val,
     str = JS_ToString(ctx, argv[0]);
     if (JS_IsException(str))
         return JS_EXCEPTION;
-    return JS_NewSymbol(ctx, JS_VALUE_GET_STRING(str), JS_ATOM_TYPE_GLOBAL_SYMBOL);
+    return JS_NewSymbolInternal(ctx, JS_VALUE_GET_STRING(str), JS_ATOM_TYPE_GLOBAL_SYMBOL);
 }
 
 static JSValue js_symbol_keyFor(JSContext *ctx, JSValueConst this_val,
