@@ -33,10 +33,6 @@
 #include <fenv.h>
 #include <math.h>
 
-#ifdef TRACY_ENABLE
-#include <tracy/TracyC.h>
-#endif
-
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__linux__) || defined(__GLIBC__)
@@ -415,6 +411,9 @@ struct JSContext {
 
     JSAtom doc_sym;
     JSAtom typeof_sym;
+    
+    void (*fn_start_hook)(JSContext*, JSValue);
+    void (*fn_end_hook)(JSContext*, JSValue);
 
     uint64_t random_state;
     bf_context_t *bf_ctx;   /* points to rt->bf_ctx, shared by all contexts */
@@ -2177,6 +2176,9 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     ctx->typeof_sym = JS_ValueToAtom(ctx,tsym);
     JS_FreeValue(ctx,dsym);
     JS_FreeValue(ctx,tsym);
+    
+    ctx->fn_start_hook = NULL;
+    ctx->fn_end_hook = NULL;
 
     return ctx;
 }
@@ -5899,9 +5901,6 @@ struct gc_object {
 
 JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx)
 {
-#ifdef TRACY_ENABLE
-    TracyCZone(js_gc, 1)
-#endif
   JSValue ret = JS_UNDEFINED;
 
     /* decrement the reference of the children of each object. mark =
@@ -5911,7 +5910,7 @@ JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx)
     /* keep the GC objects with a non zero refcount and their childs */
     gc_scan(rt);
 
-if (ctx) {
+/*if (ctx) {
   ret = JS_NewArray(ctx);
   int idx = 0;
   // Fill with release information
@@ -5923,14 +5922,11 @@ if (ctx) {
     JSValue dump = js_dump_object(ctx, (JSObject*)p);
     JS_SetPropertyUint32(ctx, ret, idx++, dump);
   }
-}
+}*/
 
     /* free the GC objects in a cycle */
     gc_free_cycles(rt);
 
-#ifdef TRACY_ENABLE
-    TracyCZoneEnd(js_gc)
-#endif
   return ret;
 }
 
@@ -16184,13 +16180,9 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
     sf->arg_buf = (JSValue*)arg_buf;
 
     func = p->u.cfunc.c_function;
-
-#if defined(TRACY_ENABLE) && !defined(_WIN32)
-    const char *ccname = get_func_name(ctx,func_obj);
-    const char *file = "<native C>";
-    TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(___tracy_alloc_srcloc(1, file, strlen(file), ccname, strlen(ccname), (int)ccname), 1);
-    JS_FreeCString(ctx,ccname);
-#endif
+    
+//    if (unlikely(ctx->fn_start_hook))
+//      ctx->fn_start_hook(ctx,func_obj);
 
     switch(cproto) {
     case JS_CFUNC_constructor:
@@ -16277,10 +16269,10 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
 
     rt->current_stack_frame = sf->prev_frame;
    
-#if defined(TRACY_ENABLE) && !defined(_WIN32)
-    ___tracy_emit_zone_end(tracy_ctx);
-#endif
-
+   
+//   if (unlikely(ctx->fn_end_hook))
+//     ctx->fn_end_hook(ctx, func_obj);
+     
     return ret_val;
 }
 
@@ -16412,23 +16404,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
     }
     b = p->u.func.function_bytecode;
 
-    // IS A FUNCTION ****** TRACE HERE ******
-#ifdef TRACY_ENABLE
-    const char *fn_src = JS_AtomToCString(caller_ctx, js_fn_filename(caller_ctx,func_obj));
-    const char *js_func_name = get_func_name(caller_ctx, func_obj);
-    const char *fn_name;
-    if (!js_func_name || js_func_name[0] == '\0')
-      fn_name = "<anonymous>";
-    else
-      fn_name = js_func_name;
-
-  uint64_t srcloc;
-  srcloc = ___tracy_alloc_srcloc(js_fn_linenum(caller_ctx,func_obj), fn_src, strlen(fn_src), fn_name, strlen(fn_name), (int)fn_src);
-    
-    TracyCZoneCtx tracy_ctx = ___tracy_emit_zone_begin_alloc(srcloc,1);
-    JS_FreeCString(caller_ctx,js_func_name);
-    JS_FreeCString(caller_ctx,fn_src);
-#endif
+//    if (unlikely(ctx->fn_start_hook))
+//      ctx->fn_start_hook(ctx,func_obj);
 
     if (unlikely(argc < b->arg_count || (flags & JS_CALL_FLAG_COPY_ARGV))) {
         arg_allocated_size = b->arg_count;
@@ -18899,9 +18876,9 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
     }
     rt->current_stack_frame = sf->prev_frame;
 
-#ifdef TRACY_ENABLE
-     ___tracy_emit_zone_end(tracy_ctx);
-#endif    
+//  if (unlikely(ctx->fn_end_hook))
+//    ctx->fn_end_hook(ctx,func_obj);
+
 
     return ret_val;
 }

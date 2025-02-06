@@ -730,7 +730,7 @@ static JSValue js_std_getenviron(JSContext *ctx, JSValueConst this_val,
 static JSValue js_std_gc(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
-    JS_RunGC(JS_GetRuntime(ctx));
+    JS_RunGC(JS_GetRuntime(ctx), ctx);
     return JS_UNDEFINED;
 }
 
