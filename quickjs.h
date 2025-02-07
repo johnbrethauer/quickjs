@@ -156,8 +156,6 @@ typedef struct JSRefCountHeader {
     int ref_count;
 } JSRefCountHeader;
 
-void quickjs_set_dumpout(FILE *f);
-void quickjs_set_cycleout(FILE *f);
 void JS_SetInterruptRate(int count);
 void JS_PrintShapes(JSRuntime *rt);
 void JS_PrintAtoms(JSRuntime *rt);
@@ -424,7 +422,7 @@ void *JS_GetRuntimeOpaque(JSRuntime *rt);
 void JS_SetRuntimeOpaque(JSRuntime *rt, void *opaque);
 typedef void JS_MarkFunc(JSRuntime *rt, JSGCObjectHeader *gp);
 void JS_MarkValue(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func);
-JSValue JS_RunGC(JSRuntime *rt, JSContext *ctx);
+void JS_RunGC(JSRuntime *rt);
 JS_BOOL JS_IsLiveObject(JSRuntime *rt, JSValueConst obj);
 
 JSValue JS_NewSymbol(JSContext *ctx, const char *description, int is_global);
@@ -497,7 +495,6 @@ typedef struct JSMemoryUsage {
 
 void JS_ComputeMemoryUsage(JSRuntime *rt, JSMemoryUsage *s);
 void JS_FillMemoryState(JSRuntime *rt, JSMemoryUsage *s);
-void JS_DumpMemoryUsage(FILE *fp, const JSMemoryUsage *s, JSRuntime *rt);
 double JS_MyValueSize(JSRuntime *rt, JSValue v);
 
 /* atom support */
@@ -1159,6 +1156,20 @@ int JS_SetModuleExport(JSContext *ctx, JSModuleDef *m, const char *export_name,
 int JS_SetModuleExportList(JSContext *ctx, JSModuleDef *m,
                            const JSCFunctionListEntry *tab, int len);
 
+typedef struct js_debug {
+  const char *name;
+  const char *what;
+  const char *source;
+  size_t srclen;
+  int nparams;
+  int vararg;
+  int line;
+  int param_n;
+  int closure_n;
+} js_debug;
+
+void js_debug_info(JSContext *js, JSValue fn, js_debug *dbg);
+
 JSValue js_debugger_closure_variables(JSContext *js, JSValue fn);
 JSValue js_debugger_local_variables(JSContext *ctx, int stack_index);
 JSValue js_debugger_build_backtrace(JSContext *ctx, const uint8_t *cur_pc);
@@ -1166,7 +1177,23 @@ JSValue js_debugger_fn_info(JSContext *ctx, JSValue fn);
 JSValue js_debugger_backtrace_fns(JSContext *ctx, const uint8_t *cur_pc);
 uint32_t js_debugger_stack_depth(JSContext *ctx);
 JSValue js_dump_value(JSContext *ctx, JSValue v);
-JSValue js_dump_object(JSContext *ctx, JSObject *p);
+JSValue js_dump_object(JSContext *ctx, JSGCObjectHeader *p);
+JSValue js_dump_leaks(JSContext *ctx);
+
+JSValue js_get_memory_usage(JSContext *js);
+
+JSValue js_dump_atoms(JSContext *js);
+JSValue js_dump_objects(JSContext *js);
+JSValue js_dump_shapes(JSContext *js);
+JSValue js_get_object_class_distribution(JSContext *js);
+JSValue js_get_object_type_overheads(JSContext *js);
+
+typedef void (*js_hook)(JSContext*, JSValue);
+#define JS_HOOK_CALL 0
+#define JS_HOOK_RET 1
+#define JS_HOOK_CYCLE 2
+#define JS_HOOK_GC 3
+void js_debug_sethook(JSContext *ctx, js_hook, int type);
 
 #undef js_unlikely
 #undef js_force_inline
