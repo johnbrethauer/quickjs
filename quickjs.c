@@ -5867,6 +5867,19 @@ struct gc_object {
   JSAtom classname;
 };
 
+JSValue js_dump_stack_info(JSContext *ctx)
+{
+  JSRuntime *rt = ctx->rt;
+  JSValue ret = JS_NewObject(ctx);
+
+  // We can do a rough usage estimate:
+  uintptr_t used = rt->stack_top ? (rt->stack_top - rt->stack_limit) : 0;
+  JS_SetPropertyStr(ctx, ret, "used", JS_NewUint32(ctx, (uint32_t)used));
+  JS_SetPropertyStr(ctx, ret, "maxSize", JS_NewUint32(ctx, (uint32_t)rt->stack_size));
+
+  return ret;
+}
+
 static JSValue js_dump_object_for_cycle(JSContext *ctx, JSObject *p) {
   JSValue obj = JS_NewObject(ctx);
 
