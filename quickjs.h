@@ -1179,7 +1179,7 @@ uint32_t js_debugger_stack_depth(JSContext *ctx);
 JSValue js_dump_value(JSContext *ctx, JSValue v);
 JSValue js_dump_object(JSContext *ctx, JSGCObjectHeader *p);
 JSValue js_dump_leaks(JSContext *ctx);
-JSVAlue js_dump_stack_info(JSContext *ctx);
+JSValue js_dump_stack_info(JSContext *ctx);
 
 JSValue js_get_memory_usage(JSContext *js);
 
