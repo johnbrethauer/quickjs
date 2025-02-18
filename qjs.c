@@ -525,7 +525,7 @@ int main(int argc, char **argv)
     if (dump_memory) {
         JSMemoryUsage stats;
         JS_ComputeMemoryUsage(rt, &stats);
-        JS_DumpMemoryUsage(stdout, &stats, rt);
+//        JS_DumpMemoryUsage(stdout, &stats, rt);
     }
     js_std_free_handlers(rt);
     JS_FreeContext(ctx);

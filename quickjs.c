@@ -7086,15 +7086,9 @@ static JSValue js_object_isPrototypeOf(JSContext *ctx, JSValueConst this_val, in
 /* return TRUE, FALSE or (-1) in case of exception */
 int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj)
 {
-  JSValue ret = js_object_isPrototypeOf(ctx, obj, 1, &val);
-  int b = JS_ToBool(ctx,ret);
-  JS_FreeValue(ctx,ret);
-    return b;
-/*
     JSValue method;
     if (!JS_IsObject(obj))
         goto fail;
-    if (!JS_
     method = JS_GetProperty(ctx, obj, JS_ATOM_Symbol_hasInstance);
     if (JS_IsException(method))
         return -1;
@@ -7110,7 +7104,6 @@ int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj)
         return -1;
     }
     return JS_OrdinaryIsInstanceOf(ctx, val, obj);
-*/
 }
 
 /* return the value associated to the autoinit property or an exception */

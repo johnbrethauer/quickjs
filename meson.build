@@ -52,3 +52,18 @@ qjs = executable('qjs',
   dependencies: [quickjs_dep, threads],
   build_by_default:false
 )
+
+test_root = join_paths(meson.project_source_root(), 'tests')
+
+test('closure', qjs, args: ['test_closure.js'], workdir: test_root)
+test('language', qjs, args: ['test_language.js'], workdir: test_root)
+test('builtin', qjs, args: ['test_builtin.js'], workdir: test_root)
+test('loop', qjs, args: ['test_loop.js'], workdir: test_root)
+test('std', qjs, args: ['test_std.js'], workdir: test_root)
+test('worker', qjs, args: ['test_worker.js'], workdir: test_root)
+
+test('op_overloading', qjs, args: ['--bignum', 'test_op_overloading.js'], workdir: test_root)
+test('bignum', qjs, args: ['--bignum', 'test_bignum.js'], workdir: test_root)
+test('qjscalc', qjs, args: ['--qjscalc', 'test_qjscalc.js'], workdir: test_root)
+
+benchmark('microbench', qjs, args: ['microbench.js'], workdir: test_root, timeout: 0)
