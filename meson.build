@@ -55,15 +55,28 @@ qjs = executable('qjs',
 
 test_root = join_paths(meson.project_source_root(), 'tests')
 
-test('closure', qjs, args: ['test_closure.js'], workdir: test_root)
-test('language', qjs, args: ['test_language.js'], workdir: test_root)
-test('builtin', qjs, args: ['test_builtin.js'], workdir: test_root)
-test('loop', qjs, args: ['test_loop.js'], workdir: test_root)
-test('std', qjs, args: ['test_std.js'], workdir: test_root)
-test('worker', qjs, args: ['test_worker.js'], workdir: test_root)
+base_tests = {
+  'closure': ['test_closure.js'],
+  'language': ['test_language.js'],
+  'loop': ['test_loop.js'],
+  'op_overloading': ['--bignum', 'test_op_overloading.js'],
+  'bignum': ['--bignum', 'test_bignum.js'],
+  'qjscalc': ['--qjscalc', 'test_qjscalc.js']
+}
 
-test('op_overloading', qjs, args: ['--bignum', 'test_op_overloading.js'], workdir: test_root)
-test('bignum', qjs, args: ['--bignum', 'test_bignum.js'], workdir: test_root)
-test('qjscalc', qjs, args: ['--qjscalc', 'test_qjscalc.js'], workdir: test_root)
+test_suite = base_tests
+
+is_windows = host_machine.system() == 'windows'
+if not is_windows
+  test_suite += {
+    'builtin': ['test_builtin.js'],
+    'std': ['test_std.js'],
+    'worker': ['test_worker.js']
+  }
+endif
+
+foreach test_name, test_args : test_suite
+  test(test_name, qjs, args: test_args, workdir: test_root)
+endforeach
 
 benchmark('microbench', qjs, args: ['microbench.js'], workdir: test_root, timeout: 0)
